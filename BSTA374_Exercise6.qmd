@@ -107,9 +107,10 @@ library(dplyr)
 library(readr)
 library(ggplot2)
 library(patchwork)
-library(rsatscan)                   # runs SaTScan from R
+library(rsatscan)    # runs SaTScan from R
 library(tigris)
 options(tigris_use_cache = TRUE)
+
 
 covid <- read_csv("data/pa_covid_deaths_2020.csv", show_col_types = FALSE) |>
   mutate(GEOID = sprintf("%05d", as.integer(FIPS)))      # text key, as in Ex. 4
@@ -132,21 +133,19 @@ runs without a window. The chunk looks in the places the installer uses.
 ```{r}
 #| label: find-satscan
 
-# if SaTScan is installed elsewhere, paste the full path to
-# SaTScanBatch64.exe (Windows) or satscan (Mac) between the quotes
-my_path <- ""
 
-candidates <- c(my_path,
-                "C:/Program Files/SaTScan/SaTScanBatch64.exe",      # Windows
-                "C:/Program Files (x86)/SaTScan/SaTScanBatch.exe",  # Windows, 32-bit
-                "/Applications/SaTScan.app/Contents/app/satscan",   # Mac
-                "/opt/satscan/lib/app/satscan64")                   # Linux
-ss_exe <- candidates[candidates != "" & file.exists(candidates)][1]
-if (is.na(ss_exe)) stop("SaTScan not found: install it, or set my_path above")
+ss_exe <- "C:/Program Files/SaTScan/SaTScanBatch64.exe"
 
-ss_dir   <- dirname(ss_exe)                                 # its folder
-ss_batch <- tools::file_path_sans_ext(basename(ss_exe))     # its name
-ss_exe
+# Check that the program exists
+file.exists(ss_exe)
+
+# Set the correct directory and executable name
+ss_dir <- dirname(ss_exe)
+ss_batch <- tools::file_path_sans_ext(basename(ss_exe))
+
+ss_dir
+ss_batch
+
 ```
 
 SaTScan reads three plain text files linked by a **location ID**, here the
@@ -206,6 +205,9 @@ county enters a scanning circle when that point does. Think of a large rural
 county whose people live mostly in one town near its edge. Why might the
 centroid misplace that county's deaths?
 
+A1. I wrote 16,030 COVID-19 deaths and a total population of 12,801,989 people to the files.
+
+A2. The centroid represents the geographic center of a county, not where most people live. If the population is concentrated near the county's edge, the centroid may fall outside a scanning circle even though most residents live inside it, causing the county's deaths to be assigned to the wrong area.
 ---
 
 ## Part B --- Choose the model and run the scan (4.5 points)
@@ -235,6 +237,21 @@ words why. Copy the table and fill it in.
 **B2.** We scan **deaths**, yet the Poisson model also needs a **population**
 file. What does SaTScan use the population for, and what is the null
 hypothesis the scan tests?
+
+B1. Choosing the Probability Model
+              Study	                                    Model	                                        Why
+(a) COVID-19 deaths by county, with population	        Poisson	                    Uses death counts and population to compare mortality rates across counties.
+
+(b) Children with heart defects and children without	  Bernoulli	Uses individual   cases and controls to identify clusters of heart defects.
+
+(c) Daily ER visits for diarrhoea by ZIP code	          Space-time permutation    	Uses case counts, locations, and dates without requiring population data.
+
+(d) Blood lead levels in children	                      Normal	                    Blood lead levels are continuous measurements rather than counts.
+
+B2. Population and Null Hypothesis
+SaTScan uses the population to calculate the expected number of deaths in each county based on the statewide mortality rate.
+
+Null hypothesis (H₀): COVID-19 mortality rates are the same across all counties, meaning deaths are distributed proportionally to population and there are no geographic clusters of unusually high or low mortality.
 
 ### The settings
 
@@ -422,6 +439,13 @@ its RR larger than its O/E?
 $p < 0.05$? Why does SaTScan list clusters that are not significant, and why
 does our map colour only those with $p < 0.05$?
 
+
+B3. SaTScan should have read all 67 counties, 16,030 deaths, and 12,801,989 people. These totals need to match the SUMMARY OF DATA to confirm no data were missing or excluded, ensuring the cluster results are accurate.
+
+B4. The most likely cluster contains 21 counties, representing 47.1% of Pennsylvania's population. Its O/E ratio is 1.16 and RR is 1.34. Not every county has an SMR above 1. The RR is larger because it compares mortality inside the cluster to the lower mortality rate outside, while O/E compares it to the statewide rate.
+
+B5. SaTScan reported 4 clusters, with 3 statistically significant (p < 0.05). It reports nonsignificant clusters to show other potential areas of elevated mortality, but the map only colors significant clusters to highlight areas with stronger statistical evidence of clustering.
+
 ---
 
 ## Part C --- The maximum window (4 points)
@@ -479,6 +503,14 @@ cluster? (Hint: `pop_pct`.)
 Department of Health, and why? There is no single right answer; give a
 reason.
 
+C1. As the maximum window decreases, the most likely cluster becomes smaller. At 50%, it includes 21 counties (47.1% of population), at 25%, it includes 3 counties (23.3%), and at 15%, it includes only Philadelphia (12.4%). The RR also decreases from 1.34 to 1.28.
+
+C2. Three clusters appear in all three runs with the same counties: Huntingdon, Juniata, and Mifflin; Bedford, Blair, Cambria, and Indiana; and Beaver and Lawrence. These clusters are more reliable because they remain consistent despite changes in the scanning window, although Beaver and Lawrence is not significant at 50%.
+
+C3. The Philadelphia-area cluster at 25% has a radius of 30 km, while the Bedford-area cluster has a radius of 58 km. Rural areas require larger circles because their populations are more spread out. At 15%, Philadelphia (12.4%) and Delaware (4.4%) cannot be in the same cluster because their combined population exceeds the 15% limit.
+
+C4. I would use the 25% maximum window because it balances detecting larger regional clusters with identifying smaller areas of elevated mortality. It identifies 6 significant clusters without combining too many counties into one large cluster like the 50% window.
+
 ---
 
 ## Part D --- The Monte Carlo $p$-value (4.5 points)
@@ -527,6 +559,12 @@ rather than the LLR of one circle?
 **D2.** Do your hand-computed $p$-values match SaTScan's? Explain the formula
 in words. What is the smallest $p$-value 999 replications can give?
 
+D1. Each grey value represents the largest LLR found in one randomly simulated map under the null hypothesis. We use the largest LLR because SaTScan searches many circles, so this accounts for multiple comparisons and determines whether the observed clusters are unusually strong.
+
+D2. Yes, all hand-computed p-values match SaTScan's results. The formula counts how many simulated maximum LLRs are at least as large as the observed LLR, adds 1, and divides by the total number of simulations plus 1.
+
+With 999 replications, the smallest possible p-value is: p_min = 1/(999 +1) = 0.001
+
 Now the same scan as `high25`, but with only **99** replications.
 
 ```{r}
@@ -555,6 +593,12 @@ having searched so many circles?
 **D5.** A classmate writes: "The most likely cluster has $p = 0.001$, so there
 is a 99.9% chance that it is a real cluster." Is this right? Rewrite the
 sentence so that it is correct.
+
+D3. The smallest possible p-value with 99 replications is 0.01. The most likely cluster's p-value increases from 0.001 to 0.01, while the weakest cluster's p-value increases from 0.046 to 0.07, making it no longer significant. Analysts use more replications to obtain more precise and reliable p-values.
+
+D4. SaTScan accounts for multiple testing by comparing observed LLRs to the largest LLR from each simulated map. Since each simulation searches all possible circles, the p-values already account for the many comparisons, unlike Local Moran's I, which tests each county separately.
+
+D5. No, a p-value does not represent the probability that a cluster is real. A correct statement is: "If there were no true geographic clustering, the probability of observing a maximum LLR at least as large as this one would be approximately 0.001."
 
 ---
 
@@ -595,6 +639,10 @@ expected.
 50% and to a significant low-rate cluster? What does that tell you about how
 to read the **outline** of a large cluster?
 
+E1. The most likely low-rate cluster is in southwestern Pennsylvania, including Allegheny, Fayette, Greene, and Washington counties. It has an O/E ratio of 0.64 and RR of 0.61. One possible reason for fewer deaths than expected is a younger population, since younger people generally have a lower risk of dying from COVID-19.
+
+E2. Yes, Wayne County belongs to both the most likely high-rate cluster at 50% and a significant low-rate cluster. This shows that a large cluster does not mean every county within it has elevated mortality. The cluster's outline represents an overall geographic pattern rather than the risk of every individual county.
+
 ---
 
 ## Part F --- Reproducibility and AI use (1 point)
@@ -618,6 +666,10 @@ reliable than a description of what you clicked in the SaTScan window?
 
 **F2.** End your document with one sentence on whether and how you used AI
 tools.
+
+F1. Three settings needed to reproduce the most likely cluster are the Discrete Poisson model, a 50% maximum spatial window, and 999 Monte Carlo replications. A script is more reliable because it records the exact settings, reduces human error, and allows others to repeat the analysis consistently.
+
+F2. I used ChatGPT to help troubleshoot R code, interpret SaTScan results, and clarify my written responses for the assignment.
 
 ---
 
